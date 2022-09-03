@@ -3,7 +3,8 @@
 </p>
 
 <p align="center">
-	Automatically save your changes in NeoVim - a heavy handed fork of Pocco81/simply-auto-save.nvim that simplifies things.
+	Automatically save your changes in NeoVim.
+	A heavy handed fork of Pocco81/simply-auto-save.nvim that aims to simplify configuration. (We have too many plugins with too many options already, let's just go with sane defaults.)
 </p>
 
 <p align="center">
