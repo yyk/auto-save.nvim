@@ -1,18 +1,10 @@
 local M = {}
 
-local cnf = require("auto-save.config")
-local callback = require("auto-save.utils.data").do_callback
-local colors = require("auto-save.utils.colors")
-local echo = require("auto-save.utils.echo")
-local autosave_running
+local config = require("auto-save.config")
+local autosave_on
 local api = vim.api
-local g = vim.g
 local fn = vim.fn
 local cmd = vim.cmd
-local o = vim.o
-local AUTO_SAVE_COLOR = "MsgArea"
-local BLACK = "#000000"
-local WHITE = "#ffffff"
 
 api.nvim_create_augroup("AutoSave", {
 	clear = true,
@@ -21,30 +13,32 @@ api.nvim_create_augroup("AutoSave", {
 local global_vars = {}
 
 local function set_buf_var(buf, name, value)
-    if buf == nil then
-        global_vars[name] = value
-    else
-        api.nvim_buf_set_var(buf, 'autosave_' .. name, value)
-    end
+	if buf == nil then
+		global_vars[name] = value
+	else
+		if api.nvim_buf_is_valid(buf) then
+			api.nvim_buf_set_var(buf, "autosave_" .. name, value)
+		end
+	end
 end
 
 local function get_buf_var(buf, name)
-    if buf == nil then
-        return global_vars[name]
-    end
-    local success, mod = pcall(api.nvim_buf_get_var, buf, 'autosave_' .. name)
-    return success and mod or nil
+	if buf == nil then
+		return global_vars[name]
+	end
+	local success, mod = pcall(api.nvim_buf_get_var, buf, "autosave_" .. name)
+	return success and mod or nil
 end
 
 local function debounce(lfn, duration)
 	local function inner_debounce()
-        local buf = api.nvim_get_current_buf()
-		if not get_buf_var(buf, 'queued') then
+		local buf = api.nvim_get_current_buf()
+		if not get_buf_var(buf, "queued") then
 			vim.defer_fn(function()
-                set_buf_var(buf, 'queued', false)
 				lfn(buf)
+				set_buf_var(buf, "queued", false)
 			end, duration)
-            set_buf_var(buf, 'queued', true)
+			set_buf_var(buf, "queued", true)
 		end
 	end
 
@@ -53,51 +47,41 @@ end
 
 function M.save(buf)
 	buf = buf or api.nvim_get_current_buf()
-
-	callback("before_asserting_save")
-
-	if cnf.opts.condition(buf) == false then
+	if not api.nvim_buf_is_valid(buf) then
 		return
 	end
 
-	if not api.nvim_buf_get_option(buf, 'modified') then
+	if not fn.getbufvar(buf, "&modifiable") then
 		return
 	end
 
-	callback("before_saving")
-
-	if g.auto_save_abort == true then
+	if not api.nvim_buf_get_option(buf, "modified") then
 		return
 	end
 
-	if cnf.opts.write_all_buffers then
-		cmd("silent! wall")
-	else
-		api.nvim_buf_call(buf, function () cmd("silent! write") end)
+	if vim.tbl_contains(config.options.ignore_filetypes, vim.api.nvim_buf_get_option(buf, "filetype")) then
+		return
 	end
 
-	callback("after_saving")
-
-	api.nvim_echo({ { (type(cnf.opts.execution_message.message) == "function" and cnf.opts.execution_message.message() or cnf.opts.execution_message.message), AUTO_SAVE_COLOR } }, true, {})
-	if cnf.opts.execution_message.cleaning_interval > 0 then
-		fn.timer_start(
-			cnf.opts.execution_message.cleaning_interval,
-			function()
-				cmd([[echon '']])
-			end
-		)
+	if vim.tbl_contains(config.options.ignore_buftypes, vim.api.nvim_buf_get_option(buf, "buftype")) then
+		return
 	end
+
+	api.nvim_buf_call(buf, function()
+		cmd("silent! write")
+	end)
+	local file_name = vim.api.nvim_buf_get_name(buf)
+	print(file_name .. " saved at " .. vim.fn.strftime("%H:%M:%S"))
 end
 
-local save_func = (cnf.opts.debounce_delay > 0 and debounce(M.save, cnf.opts.debounce_delay) or M.save)
+local save_func = (config.options.debounce_delay > 0 and debounce(M.save, config.options.debounce_delay) or M.save)
 
 local function perform_save()
-	g.auto_save_abort = false
 	save_func()
 end
 
 function M.on()
-	api.nvim_create_autocmd(cnf.opts.trigger_events, {
+	api.nvim_create_autocmd(config.options.trigger_events, {
 		callback = function()
 			perform_save()
 		end,
@@ -105,55 +89,29 @@ function M.on()
 		group = "AutoSave",
 	})
 
-	api.nvim_create_autocmd({"VimEnter", "ColorScheme", "UIEnter"}, {
-		callback = function()
-			vim.schedule(function()
-				if cnf.opts.execution_message.dim > 0 then
-					MSG_AREA = colors.get_hl("MsgArea")
-					if MSG_AREA.foreground ~= nil then
-						MSG_AREA.background = (MSG_AREA.background or colors.get_hl("Normal")["background"])
-						local foreground = (
-							o.background == "dark" and
-								colors.darken((MSG_AREA.background or BLACK), cnf.opts.execution_message.dim, MSG_AREA.foreground or BLACK) or
-								colors.lighten((MSG_AREA.background or WHITE), cnf.opts.execution_message.dim, MSG_AREA.foreground or WHITE)
-							)
-
-						colors.highlight("AutoSaveText", { fg = foreground })
-						AUTO_SAVE_COLOR = "AutoSaveText"
-					end
-				end
-			end)
-		end,
-		pattern = "*",
-		group = "AutoSave",
-	})
-
-	callback("enabling")
-	autosave_running = true
+	autosave_on = true
 end
 
 function M.off()
-
 	api.nvim_create_augroup("AutoSave", {
 		clear = true,
 	})
 
-	callback("disabling")
-	autosave_running = false
+	autosave_on = false
 end
 
 function M.toggle()
-	if autosave_running then
+	if autosave_on then
 		M.off()
-		echo("off")
+		vim.api.nvim_notify("auto-save off", vim.log.levels.INFO, {})
 	else
 		M.on()
-		echo("on")
+		vim.api.nvim_notify("auto-save on", vim.log.levels.INFO, {})
 	end
 end
 
-function M.setup(custom_opts)
-	cnf:set_options(custom_opts)
+function M.setup(options)
+	config.options = vim.tbl_extend("keep", options, config.options)
 end
 
 return M

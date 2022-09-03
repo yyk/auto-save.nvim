@@ -1,15 +1,7 @@
-if vim.g.loaded_auto_save then
-  return
-end
-vim.g.loaded_auto_save = true
-
-local command = vim.api.nvim_create_user_command
-local cnf = require("auto-save.config").opts
-
-command("ASToggle", function()
+vim.api.nvim_create_user_command("AutoSaveToggle", function()
 	require("auto-save").toggle()
 end, {})
 
-if cnf.enabled then
+if require("auto-save.config").options.enabled then
 	require("auto-save").on()
 end
